@@ -1,0 +1,5 @@
+# For `wrangler dev` only. Keep this file private; copy to .dev.vars.
+BASE_URL=http://localhost:8787
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+TOKEN_ENCRYPTION_KEY=

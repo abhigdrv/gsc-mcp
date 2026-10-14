@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsc-chatgpt-mcp",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-14",
+  "compatibility_flags": [],
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "gsc.pmaxtek.com",
+      "custom_domain": true
+    }
+  ],
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["0 3 * * *"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gsc-chatgpt-mcp",
+      "database_id": "518a2fd4-280d-42fe-84b1-9d27e23573d7",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "BASE_URL": "https://gsc.pmaxtek.com"
+  }
+}
