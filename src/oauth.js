@@ -1,7 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { hashToken, pkceChallenge, randomToken } from './crypto.js';
 import { consumeCode, consumeRefreshToken, consumeTransaction, findAccessToken, findClient, insertClient, insertCode, insertTransaction, addAccessToken, addRefreshToken, storeGoogleAccount } from './db.js';
-import { GOOGLE_SCOPE } from './google.js';
+import { GOOGLE_SCOPES } from './google.js';
 
 const googleKeys = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 const allowedScopes = new Set(['gsc.read', 'offline_access']);
@@ -60,7 +60,7 @@ export async function authorize(request, env) {
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: `${env.BASE_URL.replace(/\/$/, '')}/oauth/google/callback`,
     response_type: 'code',
-    scope: `openid email ${GOOGLE_SCOPE}`,
+    scope: `openid email ${GOOGLE_SCOPES.join(' ')}`,
     access_type: 'offline',
     include_granted_scopes: 'true',
     prompt: 'select_account',
@@ -87,7 +87,10 @@ export async function googleCallback(request, env) {
     });
     const tokens = await tokenResponse.json();
     if (!tokenResponse.ok) throw new Error(tokens.error_description || tokens.error || 'Google token exchange failed.');
-    if (tokens.scope && !tokens.scope.split(/\s+/).includes(GOOGLE_SCOPE)) throw new Error('Google did not grant Search Console read-only access.');
+    if (tokens.scope) {
+      const grantedScopes = new Set(tokens.scope.split(/\s+/));
+      if (GOOGLE_SCOPES.some((scope) => !grantedScopes.has(scope))) throw new Error('Google did not grant both Search Console and Analytics read-only access.');
+    }
     const { payload } = await jwtVerify(tokens.id_token, googleKeys, { issuer: ['https://accounts.google.com', 'accounts.google.com'], audience: env.GOOGLE_CLIENT_ID });
     if (payload.nonce !== flow.nonce || !payload.sub || !payload.email || payload.email_verified !== true) throw new Error('Could not verify the Google account identity.');
     tokens.expiry_date = Date.now() + Number(tokens.expires_in || 3600) * 1000;

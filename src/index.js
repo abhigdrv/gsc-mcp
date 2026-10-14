@@ -7,8 +7,10 @@ import {
   protectedResourceMetadata, registerClient, token, unauthorized
 } from './oauth.js';
 
-const serverInfo = { name: 'google-search-console', version: '3.0.0' };
+const serverInfo = { name: 'google-search-console-analytics', version: '4.0.0' };
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD dates.');
+const reportDate = z.string().regex(/^(\d{4}-\d{2}-\d{2}|today|yesterday|\d{1,3}daysAgo)$/, 'Use YYYY-MM-DD, today, yesterday, or a relative date such as 30daysAgo.');
+const fieldName = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,62}$/, 'Use a Google Analytics API dimension or metric name.');
 
 function textResult(value) {
   return { content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }] };
@@ -16,6 +18,10 @@ function textResult(value) {
 
 function propertyPath(siteUrl, suffix) {
   return `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/${suffix}`;
+}
+
+function propertyId(value) {
+  return value.replace(/^properties\//, '');
 }
 
 function createMcpServer(env, userId) {
@@ -82,9 +88,109 @@ function createMcpServer(env, userId) {
     } catch (error) { return textResult({ error: error.message }); }
   });
 
+  server.registerTool('ga_connection_status', {
+    title: 'Google Analytics connection status',
+    description: 'Show the Google account connected to this MCP. Search Console and Analytics use the same Google authorization.',
+    inputSchema: z.object({})
+  }, async () => {
+    const account = await accountStatus(env, userId);
+    return textResult(account ? { connected: true, googleAccount: account.email } : { connected: false });
+  });
+
+  server.registerTool('ga_list_properties', {
+    title: 'List Google Analytics properties',
+    description: 'List Google Analytics accounts and GA4 properties accessible to the connected Google account.',
+    inputSchema: z.object({
+      pageSize: z.number().int().min(1).max(200).default(100),
+      pageToken: z.string().optional()
+    })
+  }, async ({ pageSize, pageToken }) => {
+    try {
+      const url = new URL('https://analyticsadmin.googleapis.com/v1beta/accountSummaries');
+      url.searchParams.set('pageSize', String(pageSize));
+      if (pageToken) url.searchParams.set('pageToken', pageToken);
+      const data = await googleApi(env, userId, url.toString());
+      return textResult({
+        accounts: (data.accountSummaries || []).map((account) => ({
+          account: account.account,
+          accountName: account.displayName,
+          properties: (account.propertySummaries || []).map((property) => ({
+            property: property.property,
+            propertyId: propertyId(property.property),
+            propertyName: property.displayName,
+            propertyType: property.propertyType
+          }))
+        })),
+        nextPageToken: data.nextPageToken || null
+      });
+    } catch (error) { return textResult({ error: error.message }); }
+  });
+
+  server.registerTool('ga_run_report', {
+    title: 'Run a Google Analytics report',
+    description: 'Query read-only GA4 reports for a property. Use ga_get_metadata to find valid dimensions and metrics.',
+    inputSchema: z.object({
+      property: z.string().regex(/^(properties\/)?\d+$/).describe('GA4 property ID, with or without the properties/ prefix.'),
+      startDate: reportDate,
+      endDate: reportDate,
+      dimensions: z.array(fieldName).max(9).default(['date']),
+      metrics: z.array(fieldName).min(1).max(10).default(['sessions', 'activeUsers']),
+      limit: z.number().int().min(1).max(10000).default(100)
+    })
+  }, async ({ property, startDate, endDate, dimensions, metrics, limit }) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(startDate) && /^\d{4}-\d{2}-\d{2}$/.test(endDate) && startDate > endDate) {
+      return textResult({ error: 'startDate must be on or before endDate.' });
+    }
+    const id = propertyId(property);
+    try {
+      const data = await googleApi(env, userId, `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(id)}:runReport`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          dateRanges: [{ startDate, endDate }],
+          dimensions: dimensions.map((name) => ({ name })),
+          metrics: metrics.map((name) => ({ name })),
+          limit: String(limit)
+        })
+      });
+      const dimensionHeaders = (data.dimensionHeaders || []).map((header) => header.name);
+      const metricHeaders = (data.metricHeaders || []).map((header) => header.name);
+      const rows = (data.rows || []).map((row) => ({
+        dimensions: Object.fromEntries(dimensionHeaders.map((name, index) => [name, row.dimensionValues?.[index]?.value ?? null])),
+        metrics: Object.fromEntries(metricHeaders.map((name, index) => [name, row.metricValues?.[index]?.value ?? null]))
+      }));
+      return textResult({ property: `properties/${id}`, startDate, endDate, dimensionHeaders, metricHeaders, rowCount: data.rowCount ?? rows.length, rows });
+    } catch (error) { return textResult({ error: error.message }); }
+  });
+
+  server.registerTool('ga_get_metadata', {
+    title: 'Explore Google Analytics dimensions and metrics',
+    description: 'Find valid GA4 dimensions and metrics for a property, optionally filtering by a search term.',
+    inputSchema: z.object({
+      property: z.string().regex(/^(properties\/)?\d+$/).describe('GA4 property ID, with or without the properties/ prefix.'),
+      searchTerm: z.string().max(100).optional()
+    })
+  }, async ({ property, searchTerm }) => {
+    const id = propertyId(property);
+    try {
+      const data = await googleApi(env, userId, `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(id)}/metadata`);
+      const term = (searchTerm || '').toLowerCase();
+      const matches = (items = []) => items
+        .filter((item) => !term || `${item.apiName} ${item.uiName} ${item.description}`.toLowerCase().includes(term))
+        .slice(0, 100)
+        .map(({ apiName, uiName, description, deprecated, customDefinition, category }) => ({ apiName, uiName, description, deprecated, customDefinition, category }));
+      return textResult({
+        property: `properties/${id}`,
+        dimensions: matches(data.dimensions),
+        metrics: matches(data.metrics),
+        note: 'Only the first 100 matching dimensions and metrics of each kind are returned.'
+      });
+    } catch (error) { return textResult({ error: error.message }); }
+  });
+
   server.registerTool('gsc_disconnect', {
-    title: 'Disconnect Google Search Console',
-    description: 'Remove and revoke the Google Search Console credentials connected to this ChatGPT account.',
+    title: 'Disconnect Google account',
+    description: 'Revoke Google access and remove the credentials used by Search Console and Analytics tools in this MCP.',
     inputSchema: z.object({})
   }, async () => {
     try {

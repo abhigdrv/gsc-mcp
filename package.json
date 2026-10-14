@@ -1,8 +1,8 @@
 {
   "name": "google-search-console-mcp",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "Connect Google Search Console reporting data to ChatGPT through MCP.",
+  "description": "Connect Google Search Console and Google Analytics reporting data to ChatGPT through one MCP.",
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {

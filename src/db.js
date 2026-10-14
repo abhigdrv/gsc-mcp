@@ -33,7 +33,7 @@ export async function storeGoogleAccount(env, userId, email, tokens) {
 
 export async function getGoogleTokens(env, userId) {
   const row = await env.DB.prepare('SELECT encrypted_tokens,email FROM google_accounts WHERE user_id=?').bind(userId).first();
-  if (!row) throw new Error('Google Search Console is not connected. Reconnect this app and approve Google access.');
+  if (!row) throw new Error('Google is not connected. Reconnect this app and approve Google access.');
   return { tokens: await decrypt(row.encrypted_tokens, env.TOKEN_ENCRYPTION_KEY), email: row.email };
 }
 

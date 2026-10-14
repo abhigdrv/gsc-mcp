@@ -1,7 +1,10 @@
 import { decrypt, encrypt } from './crypto.js';
 import { getGoogleTokens, storeGoogleAccount } from './db.js';
 
-export const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
+export const GOOGLE_SCOPES = [
+  'https://www.googleapis.com/auth/webmasters.readonly',
+  'https://www.googleapis.com/auth/analytics.readonly'
+];
 
 export async function refreshGoogleAccess(env, userId, currentTokens) {
   const body = new URLSearchParams({
@@ -36,8 +39,8 @@ export async function googleApi(env, userId, url, init = {}) {
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const detail = data?.error?.message || 'Google Search Console request failed.';
-    throw new Error(response.status === 401 || response.status === 403 ? `${detail} Confirm this account can access the property and the Search Console API is enabled.` : detail);
+    const detail = data?.error?.message || 'Google API request failed.';
+    throw new Error(response.status === 401 || response.status === 403 ? `${detail} Confirm this Google account can access the requested property and the relevant Google API is enabled.` : detail);
   }
   return data;
 }
